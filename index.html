@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Combined Image Processor</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Product+Sans&display=swap');
+        
+        body {
+            font-family: 'Product Sans', sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0; /* Однотонный фон */
+            flex-direction: column;
+        }
+
+        .section {
+            background-color: rgba(255, 255, 255, 0.8); /* Белый фон с прозрачностью */
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); /* Полупрозрачная тень */
+            border-radius: 10px;
+            padding: 20px;
+            margin: 10px;
+            width: 80%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .custom-button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px 0;
+            background-color: black;
+            color: white;
+            border-radius: 10px;
+            text-align: center;
+            cursor: pointer;
+            user-select: none;
+            font-family: 'Product Sans', sans-serif;
+        }
+
+        .custom-button.inactive {
+            opacity: 0.5;
+        }
+
+        #canvas {
+            display: none;
+            border: 1px solid black;
+            margin-top: 20px;
+            max-width: 100%;
+        }
+
+        #output {
+            display: none;
+            white-space: pre-wrap;
+            font-family: 'Product Sans', sans-serif;
+            border: 1px solid black;
+            padding: 10px;
+            width: 100%;
+            height: 300px;
+            overflow: auto;
+        }
+
+        button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px 5px 10px 0;
+            background-color: black;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-family: 'Product Sans', sans-serif;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        button:hover {
+            opacity: 0.8;
+        }
+
+        #fileInputButton {
+            margin-right: 10px;
+        }
+
+        #renderButton.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        #outputCanvas {
+            max-width: 100%;
+            max-height: 500px;
+            border: 1px solid black;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="section">
+        <div id="imageInputContainer" class="custom-button">Upload Image</div>
+        <input type="file" id="imageInput" accept="image/png, image/jpeg" style="display:none;">
+        <div id="convertButton" class="custom-button inactive">Convert to Text</div>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="section">
+        <input type="file" id="fileInput" accept=".txt" style="display:none;">
+        <button id="fileInputButton">Выбрать Файл</button>
+        <button id="renderButton" class="disabled">Render</button><br>
+        <canvas id="outputCanvas"></canvas>
+        <button id="saveButton" style="display:none;">Save as PNG</button>
+    </div>
+
+    <script>
+        document.getElementById('imageInputContainer').addEventListener('click', () => document.getElementById('imageInput').click());
+        document.getElementById('imageInput').addEventListener('change', handleImageUpload);
+        document.getElementById('convertButton').addEventListener('click', convertImage);
+        let img = new Image();
+        let canvas, ctx;
+        let imageName = '';
+
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            imageName = file.name.replace(/\.[^/.]+$/, "");
+
+            const reader = new FileReader();
+            reader.onload = e => {
+                img.src = e.target.result;
+                img.onload = () => {
+                    canvas = document.getElementById('canvas');
+                    ctx = canvas.getContext('2d');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    document.getElementById('convertButton').classList.remove('inactive');
+                };
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function convertImage() {
+            if (!img.src) return;
+            const { width, height } = img;
+            const imageData = ctx.getImageData(0, 0, width, height);
+
+            const workerScript = 
+                `
+                onmessage = function(e) {
+                    const { data, width, height } = e.data;
+                    let output = \`\${width}\\n\${height}\\n\`;
+
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const index = (y * width + x) * 4;
+                            const r = data[index];
+                            const g = data[index + 1];
+                            const b = data[index + 2];
+                            const hex = rgbToHex(r, g, b);
+                            output += \`\${hex}\\n\`;
+                        }
+                    }
+
+                    const encryptedOutput = vigenereEncrypt(output, 'JavaImg');
+                    postMessage(encryptedOutput);
+                };
+
+                function rgbToHex(r, g, b) {
+                    return \`#\${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase()}\`;
+                }
+
+                function vigenereEncrypt(plainText, key) {
+                    const keyLength = key.length;
+                    let encryptedText = '';
+                    for (let i = 0, j = 0; i < plainText.length; i++) {
+                        const charCode = plainText.charCodeAt(i);
+                        if (charCode >= 32 && charCode <= 126) {
+                            const shift = key.charCodeAt(j % keyLength) - 32;
+                            encryptedText += String.fromCharCode(((charCode - 32 + shift) % 95) + 32);
+                            j++;
+                        } else {
+                            encryptedText += plainText[i];
+                        }
+                    }
+                    return encryptedText;
+                }
+                `;
+
+            const blob = new Blob([workerScript], { type: 'application/javascript' });
+            const worker = new Worker(URL.createObjectURL(blob));
+            worker.postMessage({ data: imageData.data, width, height });
+            worker.onmessage = e => downloadTextFile(e.data, imageName);
+        }
+
+        function downloadTextFile(content, name) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name + '.txt'; // Изменено расширение на .txt
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const fileInput = document.getElementById('fileInput');
+            const fileInputButton = document.getElementById('fileInputButton');
+            const renderButton = document.getElementById('renderButton');
+            const saveButton = document.getElementById('saveButton');
+            const outputCanvas = document.getElementById('outputCanvas');
+            fileInputButton.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', () => renderButton.classList.remove('disabled'));
+            renderButton.addEventListener('click', importImage);
+            saveButton.addEventListener('click', saveImage);
+
+            function importImage() {
+                const file = fileInput.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = e => {
+                    let contents = e.target.result.trim();
+                    contents = vigenereDecrypt(contents, 'JavaImg').split('\n');
+
+                    const width = parseInt(contents[0].trim(), 10);
+                    const height = parseInt(contents[1].trim(), 10);
+                    outputCanvas.width = width;
+                    outputCanvas.height = height;
+
+                    const ctx = outputCanvas.getContext('2d');
+                    const imageData = ctx.createImageData(width, height);
+                    const data = imageData.data;
+
+                    for (let y = 0, i = 2; y < height; y++) {
+                        for (let x = 0; x < width; x++, i++) {
+                            const colorHex = contents[i].trim().substring(1);
+                            const { r, g, b } = hexToRgb(colorHex);
+                            const index = (y * width + x) * 4;
+                            data[index] = r;
+                            data[index + 1] = g;
+                            data[index + 2] = b;
+                            data[index + 3] = 255;
+                        }
+                    }
+
+                    ctx.putImageData(imageData, 0, 0);
+                    saveButton.style.display = 'block';
+                    saveButton.download = file.name.replace('.txt', '.png');
+                };
+                reader.readAsText(file);
+            }
+
+            function hexToRgb(hex) {
+                const bigint = parseInt(hex, 16);
+                return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+            }
+
+            function vigenereDecrypt(cipherText, key) {
+                const keyLength = key.length;
+                let decryptedText = '';
+                for (let i = 0, j = 0; i < cipherText.length; i++) {
+                    const charCode = cipherText.charCodeAt(i);
+                    if (charCode >= 32 && charCode <= 126) {
+                        const shift = key.charCodeAt(j % keyLength) - 32;
+                        decryptedText += String.fromCharCode(((charCode - 32 - shift + 95) % 95) + 32);
+                        j++;
+                    } else {
+                        decryptedText += cipherText[i];
+                    }
+                }
+                return decryptedText;
+            }
+
+            function saveImage() {
+                const dataURL = outputCanvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = dataURL;
+                a.download = 'image.png';
+                a.click();
+            }
+        });
+    </script>
+</body>
+</html>
